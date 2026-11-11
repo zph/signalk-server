@@ -27,6 +27,7 @@ import {
 } from '../../utils/sourceLabels'
 import granularSubscriptionManager from './GranularSubscriptionManager'
 import { getPath$SourceKey, getPathFromKey } from './pathUtils'
+import { useIdleAutoPause } from './useIdleAutoPause'
 import {
   useWebSocket,
   useDeltaMessages,
@@ -190,6 +191,26 @@ const DataBrowser: React.FC = () => {
     return (await response.json()) as SourcesData
   }, [])
 
+  const handleBackgroundPause = useCallback(() => {
+    granularSubscriptionManager.unsubscribeAll()
+    didSubscribeRef.current = false
+  }, [])
+
+  const handleBackgroundResume = useCallback(() => {
+    loadSources()
+      .then((sourcesData) => {
+        if (isMountedRef.current) setRawSourcesData(sourcesData)
+      })
+      .catch((err) => console.warn('Failed to refresh sources:', err))
+  }, [loadSources])
+
+  const autoPaused = useIdleAutoPause(
+    !pause,
+    handleBackgroundPause,
+    handleBackgroundResume
+  )
+  const isPaused = pause || autoPaused
+
   // Trigger a debounced /signalk/v1/api/sources refetch. Used when the
   // delta stream surfaces a $source we don't yet have device-info for
   // — typical for a Signal K WS upstream that finishes its discovery
@@ -250,7 +271,7 @@ const DataBrowser: React.FC = () => {
 
   const handleMessage = useCallback(
     (msg: unknown) => {
-      if (pause) {
+      if (isPaused) {
         return
       }
 
@@ -335,7 +356,7 @@ const DataBrowser: React.FC = () => {
       }
     },
     [
-      pause,
+      isPaused,
       context,
       hasData,
       updatePath,
@@ -350,7 +371,7 @@ const DataBrowser: React.FC = () => {
 
   const subscribeToDataIfNeeded = useCallback(() => {
     if (
-      !pause &&
+      !isPaused &&
       webSocket &&
       isConnected &&
       skSelf &&
@@ -387,7 +408,7 @@ const DataBrowser: React.FC = () => {
       webSocketRef.current = webSocket
       didSubscribeRef.current = true
     }
-  }, [pause, webSocket, isConnected, skSelf, sourceFilter])
+  }, [isPaused, webSocket, isConnected, skSelf, sourceFilter])
 
   // Mirror rawSourcesData into a ref so the WS delta handler can
   // check "do we already know this $source?" without re-binding via a
@@ -429,7 +450,7 @@ const DataBrowser: React.FC = () => {
   // every time the device set updates, so this effect fires exactly
   // when fresh metadata is likely available on the REST endpoint.
   useEffect(() => {
-    if (pause) return
+    if (isPaused) return
     if (!discoveredAddresses || discoveredAddresses.length === 0) return
     let cancelled = false
     loadSources()
@@ -442,7 +463,7 @@ const DataBrowser: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [discoveredAddresses, loadSources, pause])
+  }, [discoveredAddresses, loadSources, isPaused])
 
   const contextOptions: SelectOption[] = useMemo(() => {
     const options: SelectOption[] = [
@@ -865,12 +886,12 @@ const DataBrowser: React.FC = () => {
       const newValue = event.target.value === 'filtered'
       setSourceFilter(newValue)
       localStorage.setItem(sourceFilterStorageKey, String(newValue))
-      if (!pause) {
+      if (!isPaused) {
         granularSubscriptionManager.unsubscribeAll()
         didSubscribeRef.current = false
       }
     },
-    [pause]
+    [isPaused]
   )
 
   return (
@@ -1008,7 +1029,7 @@ const DataBrowser: React.FC = () => {
                   path$SourceKeys={filteredPathKeys}
                   context={context}
                   raw={raw}
-                  isPaused={pause}
+                  isPaused={isPaused}
                   showContext={showContext}
                   sourceFilter={sourceFilter}
                   sourcesData={rawSourcesData}
